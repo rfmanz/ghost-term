@@ -182,10 +182,11 @@
     };
 
     ws.onmessage = (e) => {
-      tab.lastDataAt = Date.now();
+      const now = Date.now();
+      tab.lastDataAt = now;
       // Detect Claude Code's spinner (braille characters U+2800–U+28FF)
       if (typeof e.data === 'string' && /[\u2800-\u28FF]/.test(e.data)) {
-        tab.lastSpinnerAt = Date.now();
+        tab.lastSpinnerAt = now;
         if (!tab.thinking) {
           tab.thinking = true;
           renderTabBar();
@@ -193,7 +194,7 @@
       }
       // Detect prompt / question patterns (❯ prompt, Y/n permission prompts)
       if (typeof e.data === 'string' && /[\u276F]|\([Yy]\/[Nn]\)/.test(e.data)) {
-        tab.lastPromptAt = Date.now();
+        tab.lastPromptAt = now;
       }
       term.write(e.data);
     };
@@ -377,15 +378,21 @@
     const now = Date.now();
     tabs.forEach((tab) => {
       const sinceData = now - tab.lastDataAt;
+      // When spinner and prompt co-arrive in the same data chunk their
+      // timestamps are equal — use a shorter timeout so we transition
+      // to "waiting" quickly instead of lingering in "thinking".
+      const promptCoArrived = tab.lastPromptAt > 0
+        && tab.lastPromptAt === tab.lastSpinnerAt;
+      const timeout = promptCoArrived ? 3000 : 15000;
       // Thinking: spinner seen after last user input, no prompt since, data still flowing
       const isThinking = tab.lastSpinnerAt > 0
         && tab.lastSpinnerAt > tab.lastInputAt
         && tab.lastSpinnerAt >= tab.lastPromptAt
-        && sinceData < 8000;
-      // Waiting: prompt appeared after last spinner, still recent
+        && sinceData < timeout;
+      // Waiting: prompt appeared after (or with) last spinner, still recent
       const isWaiting = !isThinking
         && tab.lastSpinnerAt > 0
-        && tab.lastPromptAt > tab.lastSpinnerAt
+        && tab.lastPromptAt >= tab.lastSpinnerAt
         && now - tab.lastPromptAt < 30000;
       if (tab.thinking !== isThinking) {
         tab.thinking = isThinking;
