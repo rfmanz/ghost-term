@@ -3,3 +3,4 @@ output/
 .claude/
 .initialized
 ghost-term.pid
+clips/

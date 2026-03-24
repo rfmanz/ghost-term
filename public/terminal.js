@@ -196,14 +196,14 @@
           if ('claudeRunning' in status) {
             const wasRunning = tab.claudeRunning;
             tab.claudeRunning = status.claudeRunning;
-            if (wasRunning && !status.claudeRunning) {
-              // Claude stopped — reset to idle
+            if (!status.claudeRunning && (wasRunning || wasRunning === null)) {
+              // Claude stopped (or server's first report confirms not running) — reset to idle
               tab.thinking = false;
               tab.waiting = false;
               tab.quietTicks = 0;
               tab.submitted = false;
               renderTabBar();
-            } else if (!wasRunning && status.claudeRunning) {
+            } else if (status.claudeRunning && !wasRunning) {
               // Claude just started — show thinking immediately
               tab.thinking = true;
               tab.waiting = false;
@@ -217,9 +217,14 @@
 
       const now = Date.now();
       tab.lastDataAt = now;
+      // Data arriving >200ms after the last keystroke is real output, not an echo
+      if (now - tab.lastInputAt > 200) {
+        tab.lastOutputAt = now;
+      }
       // Data arrived — clear submit trigger and set thinking if Claude is running
+      // Only transition from idle→thinking (not waiting→thinking) to avoid echo flicker
       if (tab.submitted) tab.submitted = false;
-      if (tab.claudeRunning !== false && !tab.thinking) {
+      if (tab.claudeRunning !== false && !tab.thinking && !tab.waiting) {
         tab.thinking = true;
         tab.quietTicks = 0;
         renderTabBar();
@@ -246,7 +251,7 @@
       }
     });
 
-    const tab = { name, term, ws, fitAddon, container, explicit, shellTitle: '', thinking: false, waiting: false, claudeRunning: null, quietTicks: 0, submitted: false, lastDataAt: 0, lastInputAt: 0 };
+    const tab = { name, term, ws, fitAddon, container, explicit, shellTitle: '', thinking: false, waiting: false, claudeRunning: null, quietTicks: 0, submitted: false, lastDataAt: 0, lastInputAt: 0, lastOutputAt: 0 };
     tabs.push(tab);
 
     // Track shell title sequences for auto-naming
@@ -371,12 +376,13 @@
       window.close();
       return;
     }
-    // Adjust prevActiveIdx for removed tab
+    // Adjust indices for removed tab
     if (prevActiveIdx === idx) prevActiveIdx = 0;
     else if (prevActiveIdx > idx) prevActiveIdx--;
     if (prevActiveIdx >= tabs.length) prevActiveIdx = tabs.length - 1;
 
-    if (activeIdx >= tabs.length) activeIdx = tabs.length - 1;
+    if (activeIdx === idx) activeIdx = Math.min(idx, tabs.length - 1);
+    else if (activeIdx > idx) activeIdx--;
     switchTab(activeIdx);
   }
 
@@ -431,8 +437,9 @@
     let changed = false;
     const now = Date.now();
     tabs.forEach((tab) => {
-      const sinceData = now - tab.lastDataAt;
-      const dataFlowing = sinceData < 1500;
+      // Use lastOutputAt (echo-suppressed) for state transitions, not raw lastDataAt
+      const sinceOutput = now - tab.lastOutputAt;
+      const outputFlowing = sinceOutput < 1500;
       const submitActive = tab.submitted && (now - tab.lastInputAt) < 10000;
       let isThinking, isWaiting;
 
@@ -444,12 +451,12 @@
         tab.submitted = false;
       } else if (tab.claudeRunning === true) {
         // Server confirmed Claude is running — determine sub-state
-        if (submitActive || dataFlowing) {
-          // Data flowing or user just submitted — thinking
+        if (submitActive || outputFlowing) {
+          // Real output flowing or user just submitted — thinking
           isThinking = true;
           isWaiting = false;
           tab.quietTicks = 0;
-          if (dataFlowing) tab.submitted = false;
+          if (outputFlowing) tab.submitted = false;
         } else {
           // Output stopped — hysteresis before switching to waiting
           tab.quietTicks++;
@@ -465,17 +472,21 @@
         }
       } else {
         // null — server hasn't reported yet, use output-based heuristic
-        if (dataFlowing) {
+        if (outputFlowing || submitActive) {
           isThinking = true;
           isWaiting = false;
           tab.quietTicks = 0;
-        } else if (tab.thinking) {
-          // Was thinking, data stopped — hysteresis before going idle
+        } else if (tab.thinking || tab.waiting) {
+          // Was active, output stopped — hysteresis with waiting state
           tab.quietTicks++;
           if (tab.quietTicks >= 20) {
             // 20 ticks × 500ms = 10s — probably idle
             isThinking = false;
             isWaiting = false;
+          } else if (tab.quietTicks >= 8) {
+            // 8 ticks × 500ms = 4s — may be waiting for input
+            isThinking = false;
+            isWaiting = true;
           } else {
             isThinking = true;
             isWaiting = false;

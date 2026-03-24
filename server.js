@@ -181,6 +181,8 @@ wss.on('connection', (ws) => {
   });
 
   activeShells.set(ws, { pid: shell.pid, claudeRunning: false });
+  // Send initial state so the client transitions from null immediately
+  try { ws.send('\x02' + JSON.stringify({ claudeRunning: false })); } catch (e) {}
   ws.on('close', () => { activeShells.delete(ws); shell.kill(); });
   shell.onExit(() => { activeShells.delete(ws); ws.close(); });
 });
