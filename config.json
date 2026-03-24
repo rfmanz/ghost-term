@@ -3,5 +3,5 @@
   "shell": "C:\\Program Files\\Git\\usr\\bin\\bash.exe",
   "shellArgs": ["-l"],
   "video": "clips/gits_combined.mp4",
-  "autoCommand": "claude --effort max"
+  "autoCommand": "claude --effort max --enable-auto-mode"
 }

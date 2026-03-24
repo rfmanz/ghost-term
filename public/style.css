@@ -246,3 +246,65 @@ body {
 .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
 .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(0, 229, 255, 0.2); border-radius: 3px; }
 .xterm-viewport::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.4); }
+
+/* ── Split panes ── */
+.split-container {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split-container.split-h {
+  flex-direction: row;
+}
+
+.split-container.split-v {
+  flex-direction: column;
+}
+
+#terminal-container > .split-container {
+  width: 100%;
+  height: 100%;
+}
+
+.tab-terminal.split-pane {
+  flex: 1;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.tab-terminal.pane-focused {
+  box-shadow: inset 0 0 0 1px rgba(0, 229, 255, 0.2);
+}
+
+.split-divider {
+  flex-shrink: 0;
+  background: rgba(0, 229, 255, 0.12);
+}
+
+.split-divider-h {
+  width: 2px;
+}
+
+.split-divider-v {
+  height: 2px;
+}
+
+/* Pane indicator dots in tab bar */
+.tab.in-pane-0 .tab-index::after,
+.tab.in-pane-1 .tab-index::after {
+  content: '●';
+  font-size: 6px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.tab.in-pane-0 .tab-index::after {
+  color: rgba(0, 229, 255, 0.5);
+}
+
+.tab.in-pane-1 .tab-index::after {
+  color: rgba(199, 146, 234, 0.5);
+}
