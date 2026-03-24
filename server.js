@@ -4,6 +4,7 @@ const pty = require('node-pty');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const { exec } = require('child_process');
 
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 
@@ -179,9 +180,63 @@ wss.on('connection', (ws) => {
     shell.write(data);
   });
 
-  ws.on('close', () => shell.kill());
-  shell.onExit(() => ws.close());
+  activeShells.set(ws, { pid: shell.pid, claudeRunning: false });
+  ws.on('close', () => { activeShells.delete(ws); shell.kill(); });
+  shell.onExit(() => { activeShells.delete(ws); ws.close(); });
 });
+
+// ── Process monitoring: detect if Claude is running in each shell ──
+const activeShells = new Map();
+
+function hasClaudeDescendant(byParent, pid, depth) {
+  if (depth <= 0) return false;
+  const children = byParent.get(pid) || [];
+  for (const child of children) {
+    if (/^claude/i.test(child.name)) return true;
+    if (hasClaudeDescendant(byParent, child.pid, depth - 1)) return true;
+  }
+  return false;
+}
+
+setInterval(() => {
+  if (activeShells.size === 0) return;
+
+  exec('wmic process get Name,ProcessId,ParentProcessId /format:csv',
+    { windowsHide: true, timeout: 5000 },
+    (err, stdout) => {
+      if (err) return;
+
+      const lines = stdout.replace(/\r\r/g, '\r').split(/\r?\n/).filter(l => l.trim());
+      if (lines.length < 2) return;
+
+      // Parse header to find columns regardless of order
+      const header = lines[0].split(',').map(h => h.trim());
+      const nameIdx = header.indexOf('Name');
+      const pidIdx = header.indexOf('ProcessId');
+      const ppidIdx = header.indexOf('ParentProcessId');
+      if (nameIdx < 0 || pidIdx < 0 || ppidIdx < 0) return;
+
+      const byParent = new Map();
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(',');
+        const name = parts[nameIdx]?.trim();
+        const pid = parseInt(parts[pidIdx]);
+        const ppid = parseInt(parts[ppidIdx]);
+        if (!name || isNaN(pid) || isNaN(ppid)) continue;
+        if (!byParent.has(ppid)) byParent.set(ppid, []);
+        byParent.get(ppid).push({ name, pid });
+      }
+
+      for (const [ws, info] of activeShells) {
+        const running = hasClaudeDescendant(byParent, info.pid, 4);
+        if (running !== info.claudeRunning) {
+          info.claudeRunning = running;
+          try { ws.send('\x02' + JSON.stringify({ claudeRunning: running })); } catch (e) {}
+        }
+      }
+    }
+  );
+}, 2000);
 
 server.listen(config.port, () => {
   console.log(`ghost-term running at http://localhost:${config.port}`);

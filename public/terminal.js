@@ -81,6 +81,7 @@
 
   const tabs = [];
   let activeIdx = 0;
+  let prevActiveIdx = 0;
 
   const tabBar = document.getElementById('tab-bar');
   const terminalsContainer = document.getElementById('terminal-container');
@@ -174,6 +175,12 @@
     term.loadAddon(new WebLinksAddon.WebLinksAddon());
     term.open(container);
 
+    // Auto-copy selection to clipboard
+    term.onSelectionChange(() => {
+      const sel = term.getSelection();
+      if (sel) navigator.clipboard.writeText(sel);
+    });
+
     const ws = new WebSocket(wsBase);
 
     ws.onopen = () => {
@@ -182,12 +189,31 @@
     };
 
     ws.onmessage = (e) => {
+      // Server-side process status update (STX-prefixed JSON)
+      if (typeof e.data === 'string' && e.data.charCodeAt(0) === 0x02) {
+        try {
+          const status = JSON.parse(e.data.slice(1));
+          if ('claudeRunning' in status) {
+            const wasRunning = tab.claudeRunning;
+            tab.claudeRunning = status.claudeRunning;
+            if (wasRunning && !status.claudeRunning) {
+              tab.thinking = false;
+              tab.waiting = false;
+              tab.lastSpinnerAt = 0;
+              tab.lastPromptAt = 0;
+              renderTabBar();
+            }
+          }
+        } catch (err) {}
+        return;
+      }
+
       const now = Date.now();
       tab.lastDataAt = now;
       // Detect Claude Code's spinner (braille characters U+2800–U+28FF)
       if (typeof e.data === 'string' && /[\u2800-\u28FF]/.test(e.data)) {
         tab.lastSpinnerAt = now;
-        if (!tab.thinking) {
+        if (tab.claudeRunning !== false && !tab.thinking) {
           tab.thinking = true;
           renderTabBar();
         }
@@ -206,15 +232,18 @@
     term.onData((data) => {
       if (ws.readyState === 1) ws.send(data);
       tab.lastInputAt = Date.now();
-      tab.lastPromptAt = 0;
-      tab.lastSpinnerAt = 0;
-      const wasColored = tab.thinking || tab.waiting;
-      tab.thinking = false;
-      tab.waiting = false;
-      if (wasColored) renderTabBar();
+      // Only reset indicator states on submit (Enter key), not every keystroke
+      if (data.includes('\r') || data.includes('\n')) {
+        tab.lastPromptAt = 0;
+        tab.lastSpinnerAt = 0;
+        const wasColored = tab.thinking || tab.waiting;
+        tab.thinking = false;
+        tab.waiting = false;
+        if (wasColored) renderTabBar();
+      }
     });
 
-    const tab = { name, term, ws, fitAddon, container, explicit, shellTitle: '', thinking: false, waiting: false, lastSpinnerAt: 0, lastPromptAt: 0, lastDataAt: 0, lastInputAt: 0 };
+    const tab = { name, term, ws, fitAddon, container, explicit, shellTitle: '', thinking: false, waiting: false, claudeRunning: null, lastSpinnerAt: 0, lastPromptAt: 0, lastDataAt: 0, lastInputAt: 0 };
     tabs.push(tab);
 
     // Track shell title sequences for auto-naming
@@ -244,6 +273,12 @@
       if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
         const idx = parseInt(e.key) - 1;
         if (idx < tabs.length) switchTab(idx);
+        return false;
+      }
+
+      // Alt+Q: switch to last used tab
+      if (e.altKey && !e.ctrlKey && e.key === 'q') {
+        switchTab(prevActiveIdx);
         return false;
       }
 
@@ -295,6 +330,7 @@
 
   function switchTab(idx) {
     if (idx < 0 || idx >= tabs.length) return;
+    if (idx !== activeIdx) prevActiveIdx = activeIdx;
     activeIdx = idx;
 
     tabs.forEach((tab, i) => {
@@ -325,6 +361,11 @@
       window.close();
       return;
     }
+    // Adjust prevActiveIdx for removed tab
+    if (prevActiveIdx === idx) prevActiveIdx = 0;
+    else if (prevActiveIdx > idx) prevActiveIdx--;
+    if (prevActiveIdx >= tabs.length) prevActiveIdx = tabs.length - 1;
+
     if (activeIdx >= tabs.length) activeIdx = tabs.length - 1;
     switchTab(activeIdx);
   }
@@ -372,28 +413,51 @@
   switchTab(0);
 
   // ── State detector ──
-  // Tracks Claude's activity: thinking (spinner + data flowing), waiting (prompt after work)
+  // Primary: server-side process monitoring (claudeRunning) for ground truth.
+  // Fallback: heuristic detection when server hasn't reported yet.
   setInterval(() => {
     let changed = false;
     const now = Date.now();
     tabs.forEach((tab) => {
       const sinceData = now - tab.lastDataAt;
-      // When spinner and prompt co-arrive in the same data chunk their
-      // timestamps are equal — use a shorter timeout so we transition
-      // to "waiting" quickly instead of lingering in "thinking".
-      const promptCoArrived = tab.lastPromptAt > 0
-        && tab.lastPromptAt === tab.lastSpinnerAt;
-      const timeout = promptCoArrived ? 3000 : 15000;
-      // Thinking: spinner seen after last user input, no prompt since, data still flowing
-      const isThinking = tab.lastSpinnerAt > 0
-        && tab.lastSpinnerAt > tab.lastInputAt
-        && tab.lastSpinnerAt >= tab.lastPromptAt
-        && sinceData < timeout;
-      // Waiting: prompt appeared after (or with) last spinner, still recent
-      const isWaiting = !isThinking
-        && tab.lastSpinnerAt > 0
-        && tab.lastPromptAt >= tab.lastSpinnerAt
-        && now - tab.lastPromptAt < 30000;
+      let isThinking, isWaiting;
+
+      if (tab.claudeRunning === false) {
+        // Server confirmed Claude is not running — idle
+        isThinking = false;
+        isWaiting = false;
+      } else if (tab.claudeRunning === true) {
+        // Server confirmed Claude is running — determine sub-state
+        const promptIsLatest = tab.lastPromptAt > tab.lastSpinnerAt
+          && tab.lastPromptAt > tab.lastInputAt;
+        const dataSettled = sinceData > 1500;
+
+        if (promptIsLatest && dataSettled) {
+          // Prompt was last significant event and output stopped — waiting for input
+          isThinking = false;
+          isWaiting = true;
+        } else {
+          // Data flowing, or paused mid-work — thinking
+          isThinking = true;
+          isWaiting = false;
+        }
+      } else {
+        // null — server hasn't reported yet, fall back to heuristic detection
+        const promptCoArrived = tab.lastPromptAt > 0
+          && tab.lastPromptAt === tab.lastSpinnerAt;
+        const timeout = promptCoArrived ? 3000 : 15000;
+
+        isThinking = tab.lastSpinnerAt > 0
+          && tab.lastSpinnerAt > tab.lastInputAt
+          && tab.lastSpinnerAt >= tab.lastPromptAt
+          && sinceData < timeout;
+
+        isWaiting = !isThinking
+          && tab.lastSpinnerAt > 0
+          && tab.lastPromptAt >= tab.lastSpinnerAt
+          && now - tab.lastPromptAt < 30000;
+      }
+
       if (tab.thinking !== isThinking) {
         tab.thinking = isThinking;
         changed = true;
