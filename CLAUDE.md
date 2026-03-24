@@ -21,3 +21,15 @@ uv pip install <package>
 Video clips in `clips/` are tracked by Git LFS (see `.gitattributes`). No special steps needed — just use normal git commands and LFS handles it.
 
 To add a new tracked pattern: `git lfs track "pattern"`
+
+## Tab naming
+
+You MUST rename the ghost-term tab to reflect the current topic. Call this at conversation start and whenever the topic shifts:
+
+```bash
+curl -s -X POST http://localhost:3000/api/rename-tab \
+  -H "Content-Type: application/json" \
+  -d '{"name":"2-4 word slug","index":0}'
+```
+
+Derive the name from the most recent user message or current activity. This is especially important in resumed conversations where prior context may be compressed.
