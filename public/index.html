@@ -4,8 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ghost-term</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=5">
 </head>
 <body>
 
@@ -14,14 +15,17 @@
 <div id="scanlines"></div>
 <div id="vignette"></div>
 
-<div id="terminal-container">
-  <div id="terminal"></div>
+<div id="clock"></div>
+
+<div id="app">
+  <div id="tab-bar"></div>
+  <div id="terminal-container"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5/lib/xterm.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0/lib/addon-fit.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0/lib/addon-web-links.min.js"></script>
-<script src="terminal.js"></script>
+<script src="terminal.js?v=5"></script>
 
 </body>
 </html>

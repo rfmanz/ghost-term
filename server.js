@@ -12,10 +12,52 @@ if (config.video && !path.isAbsolute(config.video)) {
   config.video = path.join(__dirname, config.video);
 }
 
+const pidFile = path.join(__dirname, 'ghost-term.pid');
+
+// Write PID file so launch.bat can find and kill stale processes
+fs.writeFileSync(pidFile, String(process.pid));
+process.on('exit', () => { try { fs.unlinkSync(pidFile); } catch (e) {} });
+process.on('SIGTERM', () => process.exit(0));
+process.on('SIGINT', () => process.exit(0));
+
 const app = express();
 const server = http.createServer(app);
 
+app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// SSE clients for pushing new-tab events to the browser
+const sseClients = new Set();
+
+app.get('/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+  });
+  res.write('\n');
+  sseClients.add(res);
+  req.on('close', () => sseClients.delete(res));
+});
+
+// Health check endpoint — includes connected browser count
+app.get('/health', (req, res) => res.json({ ok: true, pid: process.pid, clients: sseClients.size }));
+
+app.post('/api/new-tab', (req, res) => {
+  const name = (req.body && req.body.name) || 'scratch';
+  for (const client of sseClients) {
+    client.write(`data: ${JSON.stringify({ type: 'new-tab', name })}\n\n`);
+  }
+  res.json({ ok: true, clients: sseClients.size });
+});
+
+app.post('/api/rename-tab', (req, res) => {
+  const { name, index } = req.body || {};
+  for (const client of sseClients) {
+    client.write(`data: ${JSON.stringify({ type: 'rename-tab', name, index })}\n\n`);
+  }
+  res.json({ ok: true, clients: sseClients.size });
+});
 
 // Serve config (sans sensitive fields) to frontend
 app.get('/config', (req, res) => {
@@ -49,6 +91,9 @@ if (config.video && fs.existsSync(config.video)) {
   });
 }
 
+// Strip ANSI escape sequences for pattern matching
+const stripAnsi = (s) => s.replace(/\x1B(?:\[[0-9;]*[A-Za-z]|\][^\x07]*\x07|\(B)/g, '');
+
 // WebSocket terminal
 const wss = new WebSocketServer({ server });
 
@@ -61,8 +106,42 @@ wss.on('connection', (ws) => {
     env: process.env,
   });
 
+  // Auto-launch state machine
+  const autoCmd = config.autoCommand;
+  let auto = autoCmd ? 'shell' : 'done';
+  let buf = '';
+  let idle = null;
+
   shell.onData((data) => {
     try { ws.send(data); } catch (e) {}
+
+    if (auto === 'done') return;
+    buf += stripAnsi(data);
+
+    switch (auto) {
+      case 'shell':
+        // Wait for bash prompt
+        if (/\$\s*$/.test(buf)) {
+          buf = '';
+          auto = 'launched';
+          setTimeout(() => shell.write(autoCmd + '\r'), 300);
+        }
+        break;
+
+      case 'launched':
+        // Auto-accept trust dialog if it appears
+        if (/Do you trust|trust.*folder/i.test(buf)) {
+          shell.write('\r');
+          buf = '';
+        }
+        // After output settles for 3s, auto-launch is complete
+        if (idle) clearTimeout(idle);
+        idle = setTimeout(() => {
+          auto = 'done';
+          buf = '';
+        }, 3000);
+        break;
+    }
   });
 
   ws.on('message', (msg) => {
