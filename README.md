@@ -4,7 +4,7 @@ A cyberpunk web terminal with looping video backgrounds, CRT effects, multi-tab 
 
 ![aesthetic](https://img.shields.io/badge/aesthetic-cyberpunk-00e5ff?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows-blue?style=flat-square)
 
-<video src="docs/demo.mp4" autoplay loop muted playsinline></video>
+https://github.com/user-attachments/assets/7dc27d11-256a-4331-8928-a8699b401eb1
 
 ## What it does
 
