@@ -64,32 +64,54 @@ app.get('/config', (req, res) => {
   res.json({ video: !!config.video });
 });
 
-// Stream video file if configured
-if (config.video && fs.existsSync(config.video)) {
-  app.get('/video', (req, res) => {
-    const stat = fs.statSync(config.video);
-    const range = req.headers.range;
+// List available background video clips
+const clipsDir = path.join(__dirname, 'clips');
+app.get('/api/videos', (req, res) => {
+  const files = fs.readdirSync(clipsDir).filter(f => f.endsWith('.mp4'));
+  res.json({ clips: files, current: path.basename(config.video || '') });
+});
 
-    if (range) {
-      const parts = range.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
-      res.writeHead(206, {
-        'Content-Range': `bytes ${start}-${end}/${stat.size}`,
-        'Accept-Ranges': 'bytes',
-        'Content-Length': end - start + 1,
-        'Content-Type': 'video/mp4',
-      });
-      fs.createReadStream(config.video, { start, end }).pipe(res);
-    } else {
-      res.writeHead(200, {
-        'Content-Length': stat.size,
-        'Content-Type': 'video/mp4',
-      });
-      fs.createReadStream(config.video).pipe(res);
-    }
-  });
-}
+// Switch background video
+app.post('/api/set-video', (req, res) => {
+  const { clip } = req.body || {};
+  if (!clip) return res.status(400).json({ error: 'clip required' });
+  const fullPath = path.join(clipsDir, clip);
+  if (!fs.existsSync(fullPath)) return res.status(404).json({ error: 'clip not found' });
+  config.video = fullPath;
+  // Notify all browser clients to reload video
+  for (const client of sseClients) {
+    client.write(`data: ${JSON.stringify({ type: 'set-video', clip })}\n\n`);
+  }
+  res.json({ ok: true, current: clip });
+});
+
+// Stream video file
+app.get('/video', (req, res) => {
+  if (!config.video || !fs.existsSync(config.video)) {
+    return res.status(404).json({ error: 'no video configured' });
+  }
+  const stat = fs.statSync(config.video);
+  const range = req.headers.range;
+
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${stat.size}`,
+      'Accept-Ranges': 'bytes',
+      'Content-Length': end - start + 1,
+      'Content-Type': 'video/mp4',
+    });
+    fs.createReadStream(config.video, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, {
+      'Content-Length': stat.size,
+      'Content-Type': 'video/mp4',
+    });
+    fs.createReadStream(config.video).pipe(res);
+  }
+});
 
 // Strip ANSI escape sequences for pattern matching
 const stripAnsi = (s) => s.replace(/\x1B(?:\[[0-9;]*[A-Za-z]|\][^\x07]*\x07|\(B)/g, '');

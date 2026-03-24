@@ -91,29 +91,52 @@
   }
 
   function renderTabBar() {
-    tabBar.innerHTML = '';
+    // Only rebuild DOM when tab count changes; otherwise update in-place to preserve CSS animations
+    const existingTabs = tabBar.querySelectorAll('.tab:not(.tab-new)');
+    const structureChanged = existingTabs.length !== tabs.length;
 
+    if (structureChanged) {
+      tabBar.innerHTML = '';
+
+      tabs.forEach((tab, i) => {
+        const el = document.createElement('div');
+        el.innerHTML = `<span class="tab-index">${i + 1}</span><span class="tab-name">${escHtml(displayName(tab))}</span>`;
+        if (tabs.length > 1) {
+          const close = document.createElement('span');
+          close.className = 'tab-close';
+          close.textContent = '\u00d7';
+          close.onclick = (e) => { e.stopPropagation(); closeTab(i); };
+          el.appendChild(close);
+        }
+        el.onclick = () => switchTab(i);
+        tab.el = el;
+        tabBar.appendChild(el);
+      });
+
+      // "+" button
+      const plus = document.createElement('div');
+      plus.className = 'tab tab-new';
+      plus.textContent = '+';
+      plus.onclick = () => createTab('scratch');
+      tabBar.appendChild(plus);
+    }
+
+    // Update classes and text in-place (preserves running CSS animations)
     tabs.forEach((tab, i) => {
-      const el = document.createElement('div');
-      el.className = 'tab' + (i === activeIdx ? ' active' : '') + (tab.thinking ? ' thinking' : '');
-      el.innerHTML = `<span class="tab-index">${i + 1}</span><span class="tab-name">${escHtml(displayName(tab))}</span>`;
-      if (tabs.length > 1) {
-        const close = document.createElement('span');
-        close.className = 'tab-close';
-        close.textContent = '\u00d7';
-        close.onclick = (e) => { e.stopPropagation(); closeTab(i); };
-        el.appendChild(close);
-      }
-      el.onclick = () => switchTab(i);
-      tabBar.appendChild(el);
-    });
+      const el = tab.el;
+      if (!el) return;
+      const state = tab.thinking ? ' thinking' : tab.waiting ? ' waiting' : '';
+      const newClass = 'tab' + (i === activeIdx ? ' active' : '') + state;
+      if (el.className !== newClass) el.className = newClass;
 
-    // "+" button
-    const plus = document.createElement('div');
-    plus.className = 'tab tab-new';
-    plus.textContent = '+';
-    plus.onclick = () => createTab('scratch');
-    tabBar.appendChild(plus);
+      const nameSpan = el.querySelector('.tab-name');
+      const newName = escHtml(displayName(tab));
+      if (nameSpan && nameSpan.innerHTML !== newName) nameSpan.innerHTML = newName;
+
+      const indexSpan = el.querySelector('.tab-index');
+      const newIdx = String(i + 1);
+      if (indexSpan && indexSpan.textContent !== newIdx) indexSpan.textContent = newIdx;
+    });
 
     // Show tab bar when there are 2+ tabs
     tabBar.style.display = tabs.length > 1 ? 'flex' : 'none';
@@ -124,8 +147,12 @@
     }
   }
 
+  let tabCounter = 0;
+
   function createTab(name) {
+    tabCounter++;
     const explicit = name !== 'scratch';
+    if (!explicit) name = `session-${tabCounter}`;
 
     const container = document.createElement('div');
     container.className = 'tab-terminal';
@@ -156,9 +183,17 @@
 
     ws.onmessage = (e) => {
       tab.lastDataAt = Date.now();
-      if (!tab.thinking) {
-        tab.thinking = true;
-        renderTabBar();
+      // Detect Claude Code's spinner (braille characters U+2800–U+28FF)
+      if (typeof e.data === 'string' && /[\u2800-\u28FF]/.test(e.data)) {
+        tab.lastSpinnerAt = Date.now();
+        if (!tab.thinking) {
+          tab.thinking = true;
+          renderTabBar();
+        }
+      }
+      // Detect prompt / question patterns (❯ prompt, Y/n permission prompts)
+      if (typeof e.data === 'string' && /[\u276F]|\([Yy]\/[Nn]\)/.test(e.data)) {
+        tab.lastPromptAt = Date.now();
       }
       term.write(e.data);
     };
@@ -169,17 +204,25 @@
 
     term.onData((data) => {
       if (ws.readyState === 1) ws.send(data);
+      tab.lastInputAt = Date.now();
+      tab.lastPromptAt = 0;
+      tab.lastSpinnerAt = 0;
+      const wasColored = tab.thinking || tab.waiting;
+      tab.thinking = false;
+      tab.waiting = false;
+      if (wasColored) renderTabBar();
     });
 
-    const tab = { name, term, ws, fitAddon, container, explicit, shellTitle: '', thinking: false, lastDataAt: 0 };
+    const tab = { name, term, ws, fitAddon, container, explicit, shellTitle: '', thinking: false, waiting: false, lastSpinnerAt: 0, lastPromptAt: 0, lastDataAt: 0, lastInputAt: 0 };
     tabs.push(tab);
 
     // Track shell title sequences for auto-naming
+    // Only update shellTitle when cleanShellTitle returns something meaningful;
+    // this preserves the last good title when Claude Code overrides with "✱ Claude Code"
     term.onTitleChange((title) => {
-      tab.shellTitle = cleanShellTitle(title);
-      if (!tab.explicit) {
-        renderTabBar();
-      }
+      const cleaned = cleanShellTitle(title);
+      if (cleaned) tab.shellTitle = cleaned;
+      if (!tab.explicit) renderTabBar();
     });
 
     // Keyboard shortcuts
@@ -225,6 +268,14 @@
       if (e.key === 'F5') {
         location.reload();
         return false;
+      }
+
+      // Shift+Up/Down: scroll by line, Shift+PageUp/PageDown: scroll by page
+      if (e.shiftKey && !e.altKey && !e.ctrlKey) {
+        if (e.key === 'ArrowUp')   { term.scrollLines(-1); return false; }
+        if (e.key === 'ArrowDown') { term.scrollLines(1);  return false; }
+        if (e.key === 'PageUp')    { term.scrollPages(-1); return false; }
+        if (e.key === 'PageDown')  { term.scrollPages(1);  return false; }
       }
 
       // F11: toggle fullscreen
@@ -295,6 +346,12 @@
       if (data.type === 'new-tab') {
         createTab(data.name || 'scratch');
       }
+      if (data.type === 'set-video') {
+        const vid = document.getElementById('bgvideo');
+        vid.src = '/video?t=' + Date.now();
+        vid.load();
+        vid.play();
+      }
       if (data.type === 'rename-tab') {
         const idx = data.index != null ? data.index : activeIdx;
         if (tabs[idx]) {
@@ -313,14 +370,29 @@
   }
   switchTab(0);
 
-  // ── Thinking state detector ──
+  // ── State detector ──
+  // Tracks Claude's activity: thinking (spinner + data flowing), waiting (prompt after work)
   setInterval(() => {
     let changed = false;
     const now = Date.now();
     tabs.forEach((tab) => {
-      const isThinking = tab.lastDataAt > 0 && (now - tab.lastDataAt < 3000);
+      const sinceData = now - tab.lastDataAt;
+      // Thinking: spinner seen after last user input, no prompt since, data still flowing
+      const isThinking = tab.lastSpinnerAt > 0
+        && tab.lastSpinnerAt > tab.lastInputAt
+        && tab.lastSpinnerAt >= tab.lastPromptAt
+        && sinceData < 8000;
+      // Waiting: prompt appeared after last spinner, still recent
+      const isWaiting = !isThinking
+        && tab.lastSpinnerAt > 0
+        && tab.lastPromptAt > tab.lastSpinnerAt
+        && now - tab.lastPromptAt < 30000;
       if (tab.thinking !== isThinking) {
         tab.thinking = isThinking;
+        changed = true;
+      }
+      if (tab.waiting !== isWaiting) {
+        tab.waiting = isWaiting;
         changed = true;
       }
     });
