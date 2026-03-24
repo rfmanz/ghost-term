@@ -150,6 +150,27 @@ curl -X POST http://localhost:3000/api/set-video \
 | The Matrix | `matrix_clip.mp4` | ~17 MB |
 | GITS (combined short) | `gits_combined.mp4` | ~16 MB |
 
+### Pasting images into Codex
+
+On this machine, `codex-paste` saves the current Windows clipboard image to `C:\Users\_\.codex\paste-cache` and launches Codex with the image attached.
+
+```bash
+# Briefly describe the image, then ask what to do next
+codex-paste
+
+# Attach the clipboard image with a specific instruction
+codex-paste "extract the code from this screenshot"
+```
+
+New Git Bash login shells also expose `/paste` as shorthand for `codex-paste`, so inside ghost-term you can run:
+
+```bash
+/paste
+/paste "extract the code from this screenshot"
+```
+
+If there is no image in the clipboard, the helper exits with guidance instead of launching Codex.
+
 ### Markdown renderer
 
 Convert any `.md` file to a styled HTML page with the same cyberpunk aesthetic:

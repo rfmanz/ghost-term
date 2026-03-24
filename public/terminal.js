@@ -237,6 +237,39 @@
     applyNodeRatio(node);
   }
 
+  function reorderTabsToPanes() {
+    if (!splitRoot) return;
+
+    const leaves = allLeaves(splitRoot);
+    const paneIndices = leaves.map(l => l.tabIdx);
+    const paneSet = new Set(paneIndices);
+    const rest = [];
+    for (let i = 0; i < tabs.length; i++) {
+      if (!paneSet.has(i)) rest.push(i);
+    }
+    const newOrder = [...paneIndices, ...rest];
+
+    if (newOrder.every((oldIdx, newIdx) => oldIdx === newIdx)) return;
+
+    const indexMap = new Map();
+    newOrder.forEach((oldIdx, newIdx) => indexMap.set(oldIdx, newIdx));
+
+    const reordered = newOrder.map(i => tabs[i]);
+    tabs.length = 0;
+    tabs.push(...reordered);
+
+    function updateTree(node) {
+      if (node.type === 'leaf') node.tabIdx = indexMap.get(node.tabIdx);
+      else { updateTree(node.children[0]); updateTree(node.children[1]); }
+    }
+    updateTree(splitRoot);
+
+    activeIdx = indexMap.get(activeIdx);
+    prevActiveIdx = indexMap.get(prevActiveIdx);
+
+    tabBar.innerHTML = '';
+  }
+
   function buildNodeDOM(node) {
     if (node.type === 'leaf') {
       const container = tabs[node.tabIdx].container;
@@ -261,6 +294,7 @@
   }
 
   function rebuildSplitDOM() {
+    reorderTabsToPanes();
     terminalsContainer.querySelectorAll('.split-container').forEach(el => el.remove());
     tabs.forEach(tab => {
       tab.container.classList.remove('split-pane', 'pane-focused');
