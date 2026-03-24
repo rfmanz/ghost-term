@@ -4,6 +4,8 @@ A cyberpunk web terminal with looping video backgrounds, CRT effects, multi-tab 
 
 ![aesthetic](https://img.shields.io/badge/aesthetic-cyberpunk-00e5ff?style=flat-square) ![platform](https://img.shields.io/badge/platform-Windows-blue?style=flat-square)
 
+<video src="docs/demo.mp4" autoplay loop muted playsinline></video>
+
 ## What it does
 
 - **Web-based terminal** using xterm.js over WebSocket, backed by `node-pty`
@@ -77,6 +79,20 @@ This script handles everything:
 1. If the server is already running and a browser window is connected → opens a **new tab** in the existing window
 2. If the server is running but no browser → opens a **new Chrome window**
 3. If the server is not running → kills any stale process on port 3000, starts the server, waits for it to be healthy, then opens Chrome
+
+### Start Menu shortcut
+
+Running `create-shortcut.ps1` places a **Ghost Term** shortcut in your Windows Start Menu (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Ghost Term.lnk`) that points to `launch.bat`. This means you can press **Win**, type **Ghost Term**, and hit Enter to launch.
+
+The shortcut runs `launch.bat`, which is smart about the current state:
+
+| State | What happens |
+|---|---|
+| Server running + browser connected | Opens a **new tab** in the existing window (via `/api/new-tab`) |
+| Server running + no browser | Opens a **new Chrome window** in `--app` mode |
+| Server not running | Kills any stale process on port 3000, starts the server in the background, waits for it to be healthy, then opens Chrome |
+
+Chrome is launched with `--app` (borderless), `--start-fullscreen`, and a dedicated `--user-data-dir` so it doesn't interfere with your normal Chrome profile.
 
 ### Manual start
 
