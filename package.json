@@ -1,0 +1,15 @@
+{
+  "name": "ghost-term",
+  "version": "1.0.0",
+  "description": "Cyberpunk web terminal with Ghost in the Shell aesthetic",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "render": "node render.js"
+  },
+  "dependencies": {
+    "express": "^4",
+    "node-pty": "^1",
+    "ws": "^8"
+  }
+}
