@@ -110,6 +110,8 @@ chrome --app=http://localhost:3000 --start-fullscreen --force-device-scale-facto
 | Shortcut | Action |
 |---|---|
 | Alt + 1–9 | Switch to tab N |
+| Ctrl + Tab / Ctrl + Shift + Tab | Next / previous tab |
+| Alt + Q | Switch to last used tab |
 | Alt + T | New tab |
 | Ctrl + W | Close current tab |
 | Shift + Up/Down | Scroll by line |

@@ -285,6 +285,13 @@
         return false;
       }
 
+      // Ctrl+Tab / Ctrl+Shift+Tab: next/previous tab
+      if (e.ctrlKey && !e.altKey && e.key === 'Tab') {
+        const dir = e.shiftKey ? -1 : 1;
+        switchTab((activeIdx + dir + tabs.length) % tabs.length);
+        return false;
+      }
+
       // Alt+T: new tab
       if (e.altKey && !e.ctrlKey && e.key === 't') {
         createTab('scratch');
