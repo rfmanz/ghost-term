@@ -60,23 +60,6 @@
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function cleanShellTitle(title) {
-    title = title.trim();
-    // Ignore generic titles set by CLI tools (e.g. "claude", "✱ Claude Code")
-    const letters = title.replace(/[^a-zA-Z\s]/g, '').trim();
-    if (/^claude(\s+code)?\s*$/i.test(letters)) return '';
-    // Strip MINGW64: or similar prefix
-    title = title.replace(/^MINGW\d*:\s*/, '');
-    // Collapse /c/Users/<user>/ to ~/
-    title = title.replace(/^\/[a-z]\/Users\/[^/]+\/?/, '~/');
-    // If it's just ~, show "home"
-    if (title === '~' || title === '~/') return '~';
-    // Show last two path segments for brevity
-    const parts = title.replace(/\/$/, '').split('/');
-    if (parts.length > 2) return parts.slice(-2).join('/');
-    return title || '';
-  }
-
   // ── Tab state ──
 
   const tabs = [];
@@ -86,11 +69,6 @@
 
   const tabBar = document.getElementById('tab-bar');
   const terminalsContainer = document.getElementById('terminal-container');
-
-  function displayName(tab) {
-    if (tab.explicit) return tab.name;
-    return tab.shellTitle || tab.name;
-  }
 
   function renderTabBar() {
     // Only rebuild DOM when tab count changes; otherwise update in-place to preserve CSS animations
@@ -102,7 +80,7 @@
 
       tabs.forEach((tab, i) => {
         const el = document.createElement('div');
-        el.innerHTML = `<span class="tab-index">${i + 1}</span><span class="tab-name">${escHtml(displayName(tab))}</span>`;
+        el.innerHTML = `<span class="tab-index">${i + 1}</span><span class="tab-name">${escHtml(tab.name)}</span>`;
         if (tabs.length > 1) {
           const close = document.createElement('span');
           close.className = 'tab-close';
@@ -137,7 +115,7 @@
       if (el.className !== newClass) el.className = newClass;
 
       const nameSpan = el.querySelector('.tab-name');
-      const newName = escHtml(displayName(tab));
+      const newName = escHtml(tab.name);
       if (nameSpan && nameSpan.innerHTML !== newName) nameSpan.innerHTML = newName;
 
       const indexSpan = el.querySelector('.tab-index');
@@ -159,7 +137,7 @@
 
     // Update document title
     if (tabs[activeIdx]) {
-      document.title = `ghost-term \u2014 ${displayName(tabs[activeIdx])}`;
+      document.title = `ghost-term \u2014 ${tabs[activeIdx].name}`;
     }
   }
 
@@ -435,6 +413,11 @@
       if (typeof e.data === 'string' && e.data.charCodeAt(0) === 0x02) {
         try {
           const status = JSON.parse(e.data.slice(1));
+          // Auto-rename from server keystroke analysis (doesn't override explicit API renames)
+          if ('rename' in status && !tab.explicit) {
+            tab.name = status.rename;
+            renderTabBar();
+          }
           if ('claudeRunning' in status) {
             const wasRunning = tab.claudeRunning;
             tab.claudeRunning = status.claudeRunning;
@@ -493,7 +476,7 @@
       }
     });
 
-    const tab = { name, term, ws, fitAddon, container, explicit, shellTitle: '', thinking: false, waiting: false, claudeRunning: null, quietTicks: 0, submitted: false, lastDataAt: 0, lastInputAt: 0, lastOutputAt: 0 };
+    const tab = { name, term, ws, fitAddon, container, explicit, thinking: false, waiting: false, claudeRunning: null, quietTicks: 0, submitted: false, lastDataAt: 0, lastInputAt: 0, lastOutputAt: 0 };
     tabs.push(tab);
 
     // Click to focus pane in split mode
@@ -506,13 +489,16 @@
         }
       }
     });
-    // Track shell title sequences for auto-naming
-    // Only update shellTitle when cleanShellTitle returns something meaningful;
-    // this preserves the last good title when Claude Code overrides with "✱ Claude Code"
+    // Track shell title for auto-naming (only when not explicitly renamed via API)
     term.onTitleChange((title) => {
-      const cleaned = cleanShellTitle(title);
-      if (cleaned) tab.shellTitle = cleaned;
-      if (!tab.explicit) renderTabBar();
+      if (tab.explicit) return;
+      title = title.trim();
+      if (!title || /claude/i.test(title.replace(/[^a-zA-Z\s]/g, ''))) return;
+      title = title.replace(/^MINGW\d*:\s*/, '');
+      title = title.replace(/^\/[a-z]\/Users\/[^/]+\/?/, '~/');
+      const parts = title.replace(/\/$/, '').split('/');
+      tab.name = parts.length > 2 ? parts.slice(-2).join('/') : title;
+      renderTabBar();
     });
 
     // Keyboard shortcuts

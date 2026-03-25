@@ -12,6 +12,7 @@ https://github.com/user-attachments/assets/7dc27d11-256a-4331-8928-a8699b401eb1
 - **Video backgrounds** — looping `.mp4` clips behind the terminal with scanlines, vignette, and CRT-style post-processing
 - **Multi-tab** — create, close, and switch between terminal sessions (Alt+1-9, Alt+T, Ctrl+W)
 - **Claude Code integration** — auto-launches `claude` on startup; tabs pulse purple while Claude is thinking, amber when waiting for input
+- **Conversation-aware tab naming** — Claude can rename the active tab from the current conversation topic, and the included Stop hook keeps it aligned as work shifts
 - **Markdown renderer** — converts `.md` files to styled HTML with the same cyberpunk aesthetic (`node render.js`)
 - **Hot-swappable clips** — switch background video at runtime via API or Claude Code slash command
 
@@ -120,6 +121,38 @@ chrome --app=http://localhost:3000 --start-fullscreen --force-device-scale-facto
 | F11 | Toggle fullscreen |
 | Alt + A | Send Ctrl+A (readline: beginning of line) |
 | Alt + K | Send Ctrl+K (readline: kill to end of line) |
+
+### Conversation-aware tab naming
+
+If you use Claude Code with ghost-term, you can keep the active tab name aligned with the current topic by pointing a Claude Stop hook at `hooks/auto-rename.js`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node C:/Users/_/Desktop/ghost-term/hooks/auto-rename.js"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The hook reads recent user turns from the transcript, weights newer turns more heavily, derives a stable 2-4 word label, and posts it to `/api/rename-tab`. Generic prompts like `implement the plan`, `continue`, and similar follow-ups are ignored so the tab name stays anchored to the real topic.
+
+You can still rename tabs manually at any time:
+
+```bash
+curl -s -X POST http://localhost:3000/api/rename-tab \
+  -H "Content-Type: application/json" \
+  -d '{"name":"tab naming hook","index":0}'
+```
 
 ### Switching background video
 

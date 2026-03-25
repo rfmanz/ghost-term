@@ -117,6 +117,21 @@ app.get('/video', (req, res) => {
 // Strip ANSI escape sequences for pattern matching
 const stripAnsi = (s) => s.replace(/\x1B(?:\[[0-9;]*[A-Za-z]|\][^\x07]*\x07|\(B)/g, '');
 
+// Extract a 2-4 word slug from user input for tab naming
+const stopWords = new Set([
+  'the','a','an','in','on','at','to','for','of','with','from','by',
+  'and','or','but','so','if','not','no','yes','ok',
+  'i','me','my','you','your','we','our','it','its','this','that',
+  'is','are','was','were','be','do','does','did','will','would','can',
+  'please','just','also','like','now','here','some','all',
+]);
+function extractSlug(text) {
+  const words = text.replace(/[^a-zA-Z0-9\s]/g, ' ').trim().split(/\s+/);
+  const meaningful = words.filter(w => w.length > 2 && !stopWords.has(w.toLowerCase()));
+  if (meaningful.length === 0) return '';
+  return meaningful.slice(0, 4).join(' ').substring(0, 40);
+}
+
 // WebSocket terminal
 const wss = new WebSocketServer({ server });
 
@@ -167,6 +182,10 @@ wss.on('connection', (ws) => {
     }
   });
 
+  // Keystroke buffer for auto-naming tabs from user input
+  let inputBuf = '';
+  let lastSlug = '';
+
   ws.on('message', (msg) => {
     const data = msg.toString();
     // Handle resize messages
@@ -177,6 +196,24 @@ wss.on('connection', (ws) => {
       } catch (e) {}
       return;
     }
+
+    // Buffer printable keystrokes; on Enter, extract slug and push rename
+    for (const ch of data) {
+      const code = ch.charCodeAt(0);
+      if (ch === '\r' || ch === '\n') {
+        const slug = inputBuf.length > 10 ? extractSlug(inputBuf) : '';
+        if (slug && slug !== lastSlug) {
+          lastSlug = slug;
+          try { ws.send('\x02' + JSON.stringify({ rename: slug })); } catch (e) {}
+        }
+        inputBuf = '';
+      } else if (code === 0x7f || code === 0x08) {
+        inputBuf = inputBuf.slice(0, -1);
+      } else if (code >= 32 && inputBuf.length < 500) {
+        inputBuf += ch;
+      }
+    }
+
     shell.write(data);
   });
 

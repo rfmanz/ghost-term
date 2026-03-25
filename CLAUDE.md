@@ -24,7 +24,18 @@ To add a new tracked pattern: `git lfs track "pattern"`
 
 ## Tab naming
 
-You MUST rename the ghost-term tab to reflect the current topic. Call this at conversation start and whenever the topic shifts:
+You MUST keep the ghost-term tab name aligned with the active conversation topic. Rename it at conversation start, after a clear topic shift, and when a resumed/compressed session needs to be re-grounded.
+
+Name selection rules:
+
+- Base it on a short summary of the current active conversation, not just the last message in isolation.
+- Weight recent user turns and the current work item most heavily.
+- Use 2-4 words, prefer spaces over hyphens, and keep it readable in the tab bar.
+- Prefer stable noun-phrase style labels over imperative prompts.
+- Ignore generic follow-ups like `implement the plan`, `continue`, `do it`, and similar low-context turns.
+- If the topic has not materially changed, keep the current name instead of churning it.
+
+Call the existing rename API:
 
 ```bash
 curl -s -X POST http://localhost:3000/api/rename-tab \
@@ -32,4 +43,4 @@ curl -s -X POST http://localhost:3000/api/rename-tab \
   -d '{"name":"2-4 word slug","index":0}'
 ```
 
-Derive the name from the most recent user message or current activity. This is especially important in resumed conversations where prior context may be compressed.
+The project Stop hook in `hooks/auto-rename.js` is a fallback that derives the same kind of label from the Claude transcript when available.

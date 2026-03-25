@@ -1,110 +1,153 @@
 #!/usr/bin/env node
-// Hook: Stop → auto-rename ghost-term tab from conversation context.
-// Reads the transcript to get recent user messages, extracts the most
-// frequent topic words, and posts a slug to ghost-term's rename API.
-// Silently exits if ghost-term isn't running.
+// Hook: Stop -> auto-rename ghost-term tab using Claude Haiku.
+// Reads the Claude transcript, sends recent conversation to Haiku for
+// a 2-4 word topic label, and posts it to ghost-term's rename API.
+// Silently exits if ghost-term or transcript data is unavailable.
 
-const http = require('http');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const http = require('http');
+const { execSync } = require('child_process');
 
-const STOP = new Set([
-  'the','a','an','is','are','was','were','be','been','have','has','had',
-  'do','does','did','will','would','could','should','may','might','can',
-  'to','of','in','for','on','with','at','by','from','as','into','through',
-  'during','before','after','between','out','off','up','down','over','under',
-  'again','then','here','there','when','where','why','how','all','each',
-  'every','both','few','more','most','other','some','such','no','nor','not',
-  'only','own','same','so','than','too','very','just','because','but','and',
-  'or','if','it','its','this','that','these','those','i','me','my','we',
-  'our','you','your','he','him','his','she','her','they','them','their',
-  'what','which','who','whom','about','also','like','really','want','need',
-  'yeah','yes','ok','okay','sure','please','thanks','right','well','now',
-  'dont','im','ive','gonna','wanna','lets','hey','hi','hello','yo',
-  'make','get','put','set','go','went','going','come','take','give',
-  'know','think','see','look','tell','say','said','thing','stuff',
-  'actually','basically','something','anything','everything',
-  'work','working','works','using','used','file','code','run','running',
-  'change','changed','changes','way','new','first','last','still',
-  'already','try','trying','tried','keep','back','start','done',
-]);
+// Prevent recursion: spawned claude process would re-trigger this hook
+if (process.env.GHOST_TERM_RENAME) process.exit(0);
+
+const MAX_MESSAGES = 10;
+const MAX_MSG_LENGTH = 300;
+const COOLDOWN_MS = 2.5 * 60 * 1000; // 2.5 minutes between renames
+const STAMP_FILE = path.join(os.tmpdir(), 'ghost-term-rename-stamp');
+
+const PROMPT = `You are a tab-naming assistant. Given this conversation between a user and Claude, output ONLY a 2-4 word topic label that captures the current focus. Just the label — no quotes, no explanation, no punctuation, no formatting.
+
+`;
 
 function extractText(content) {
+  if (!content) return '';
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
-    return content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join(' ');
+    return content.map(item => extractText(item)).filter(Boolean).join(' ');
+  }
+  if (typeof content === 'object') {
+    if (typeof content.text === 'string') return content.text;
+    if (typeof content.content === 'string' || Array.isArray(content.content)) {
+      return extractText(content.content);
+    }
   }
   return '';
 }
 
-let input = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', d => input += d);
-process.stdin.on('end', () => {
+function readTranscriptMessages(transcriptPath) {
+  const raw = fs.readFileSync(transcriptPath, 'utf8').trim();
+  if (!raw) return [];
+
   try {
-    const data = JSON.parse(input);
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed.messages)) return parsed.messages;
+  } catch {}
 
-    // Prevent infinite loops
-    if (data.stop_hook_active) process.exit(0);
+  const messages = [];
+  for (const line of raw.split(/\r?\n/)) {
+    try { messages.push(JSON.parse(line)); } catch {}
+  }
+  return messages;
+}
 
-    const tp = data.transcript_path;
-    if (!tp || !fs.existsSync(tp)) process.exit(0);
+function collectRecentMessages(transcriptPath) {
+  const messages = readTranscriptMessages(transcriptPath);
+  const recent = [];
 
-    // Read transcript, collect recent user messages (last 8)
-    const lines = fs.readFileSync(tp, 'utf8').trim().split('\n');
-    const userTexts = [];
-    for (let i = lines.length - 1; i >= 0 && userTexts.length < 8; i--) {
-      try {
-        const msg = JSON.parse(lines[i]);
-        if (msg.type === 'human' || msg.role === 'user') {
-          const text = extractText(msg.content);
-          // Skip slash commands and very long (skill-expanded) prompts
-          if (text && text.length < 300 && !text.startsWith('/')) {
-            userTexts.push(text);
-          }
-        }
-      } catch {}
-    }
+  for (let i = messages.length - 1; i >= 0 && recent.length < MAX_MESSAGES; i--) {
+    const msg = messages[i];
+    const role = msg.role || msg.type;
+    const normalized = role === 'human' ? 'user' : role;
+    if (normalized !== 'user' && normalized !== 'assistant') continue;
 
-    if (userTexts.length === 0) process.exit(0);
+    const text = extractText(msg.content || msg.message || msg.text);
+    if (!text) continue;
 
-    // Tokenize all messages, count frequencies
-    const freq = {};
-    for (const text of userTexts) {
-      const words = text.toLowerCase()
-        .replace(/[^a-z0-9\s-]/g, '')
-        .split(/[\s-]+/)
-        .filter(w => w.length > 2 && !STOP.has(w));
-      for (const w of words) freq[w] = (freq[w] || 0) + 1;
-    }
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.startsWith('/') || trimmed.length < 2) continue;
 
-    // Pick top 2-3 words by frequency, break ties by first appearance
-    const ranked = Object.entries(freq)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([w]) => w);
+    recent.push({
+      role: normalized,
+      text: trimmed.length > MAX_MSG_LENGTH ? trimmed.slice(0, MAX_MSG_LENGTH) + '…' : trimmed,
+    });
+  }
 
-    if (ranked.length === 0) process.exit(0);
-    const slug = ranked.join('-');
-    if (slug.length < 3) process.exit(0);
+  return recent.reverse();
+}
 
-    const body = JSON.stringify({ name: slug });
+function postRename(name) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ name, index: 0 });
     const req = http.request({
       hostname: 'localhost',
       port: 3000,
       path: '/api/rename-tab',
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      timeout: 1000,
-    }, () => process.exit(0));
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+      },
+      timeout: 2000,
+    }, () => resolve());
 
-    req.on('error', () => process.exit(0));
-    req.on('timeout', () => { req.destroy(); process.exit(0); });
+    req.on('error', resolve);
+    req.on('timeout', () => { req.destroy(); resolve(); });
     req.write(body);
     req.end();
-  } catch {
+  });
+}
+
+async function main() {
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => { input += chunk; });
+  process.stdin.on('end', async () => {
+    try {
+      const data = JSON.parse(input);
+      if (data.stop_hook_active) process.exit(0);
+
+      const transcriptPath = data.transcript_path;
+      if (!transcriptPath || !fs.existsSync(transcriptPath)) process.exit(0);
+
+      // Debounce: skip if we renamed recently
+      try {
+        const stamp = fs.statSync(STAMP_FILE).mtimeMs;
+        if (Date.now() - stamp < COOLDOWN_MS) process.exit(0);
+      } catch {} // no stamp file = first run, proceed
+
+      const messages = collectRecentMessages(transcriptPath);
+      if (messages.length === 0) process.exit(0);
+
+      const conversation = messages.map(m => `${m.role}: ${m.text}`).join('\n');
+
+      let label = execSync('claude -p --model haiku', {
+        input: PROMPT + conversation,
+        encoding: 'utf8',
+        timeout: 15000,
+        env: { ...process.env, GHOST_TERM_RENAME: '1' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim();
+
+      // Clean up: strip quotes, trailing punctuation
+      label = label.replace(/^["']|["']$/g, '').replace(/[.!?]$/, '').trim();
+
+      if (!label || label.length < 3 || label.length > 40) process.exit(0);
+      if (label.split(/\s+/).length > 5) process.exit(0);
+
+      await postRename(label);
+      // Touch stamp file so we don't rename again too soon
+      fs.writeFileSync(STAMP_FILE, '');
+    } catch {}
     process.exit(0);
-  }
-});
+  });
+}
+
+if (require.main === module) {
+  main();
+} else {
+  module.exports = { collectRecentMessages, extractText };
+}
