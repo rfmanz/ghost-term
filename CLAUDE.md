@@ -35,12 +35,12 @@ Name selection rules:
 - Ignore generic follow-ups like `implement the plan`, `continue`, `do it`, and similar low-context turns.
 - If the topic has not materially changed, keep the current name instead of churning it.
 
-Call the existing rename API:
+Call the existing rename API using `$GHOST_TERM_TAB_ID` (set automatically by the server) to route the rename to the correct tab via WebSocket:
 
 ```bash
 curl -s -X POST http://localhost:3000/api/rename-tab \
   -H "Content-Type: application/json" \
-  -d '{"name":"2-4 word slug","index":0}'
+  -d "{\"name\":\"2-4 word slug\",\"tabId\":\"$GHOST_TERM_TAB_ID\"}"
 ```
 
 The project Stop hook in `hooks/auto-rename.js` is a fallback that derives the same kind of label from the Claude transcript when available.
