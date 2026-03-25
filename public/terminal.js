@@ -413,6 +413,12 @@
       if (typeof e.data === 'string' && e.data.charCodeAt(0) === 0x02) {
         try {
           const status = JSON.parse(e.data.slice(1));
+          // Explicit rename routed from the stop hook via server (sets explicit to lock name)
+          if ('apiRename' in status) {
+            tab.name = status.apiRename;
+            tab.explicit = true;
+            renderTabBar();
+          }
           // Auto-rename from server keystroke analysis (doesn't override explicit API renames)
           if ('rename' in status && !tab.explicit) {
             tab.name = status.rename;

@@ -4,6 +4,7 @@ const pty = require('node-pty');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const crypto = require('crypto');
 const { exec } = require('child_process');
 
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
@@ -53,7 +54,15 @@ app.post('/api/new-tab', (req, res) => {
 });
 
 app.post('/api/rename-tab', (req, res) => {
-  const { name, index } = req.body || {};
+  const { name, index, tabId } = req.body || {};
+  // If the hook sent a tabId, route the rename directly through that tab's WebSocket
+  if (tabId && tabIdToWs.has(tabId)) {
+    const ws = tabIdToWs.get(tabId);
+    try { ws.send('\x02' + JSON.stringify({ apiRename: name })); } catch (e) {}
+    res.json({ ok: true, routed: true });
+    return;
+  }
+  // Otherwise broadcast via SSE (manual renames, curl, etc.)
   for (const client of sseClients) {
     client.write(`data: ${JSON.stringify({ type: 'rename-tab', name, index })}\n\n`);
   }
@@ -135,14 +144,18 @@ function extractSlug(text) {
 // WebSocket terminal
 const wss = new WebSocketServer({ server });
 
+const tabIdToWs = new Map();
+
 wss.on('connection', (ws) => {
+  const tabId = crypto.randomUUID();
   const shell = pty.spawn(config.shell, config.shellArgs, {
     name: 'xterm-256color',
     cols: 120,
     rows: 30,
     cwd: process.env.HOME || process.env.USERPROFILE,
-    env: process.env,
+    env: { ...process.env, GHOST_TERM_TAB_ID: tabId },
   });
+  tabIdToWs.set(tabId, ws);
 
   // Auto-launch state machine
   const autoCmd = config.autoCommand;
@@ -220,8 +233,8 @@ wss.on('connection', (ws) => {
   activeShells.set(ws, { pid: shell.pid, claudeRunning: false });
   // Send initial state so the client transitions from null immediately
   try { ws.send('\x02' + JSON.stringify({ claudeRunning: false })); } catch (e) {}
-  ws.on('close', () => { activeShells.delete(ws); shell.kill(); });
-  shell.onExit(() => { activeShells.delete(ws); ws.close(); });
+  ws.on('close', () => { activeShells.delete(ws); tabIdToWs.delete(tabId); shell.kill(); });
+  shell.onExit(() => { activeShells.delete(ws); tabIdToWs.delete(tabId); ws.close(); });
 });
 
 // ── Process monitoring: detect if Claude is running in each shell ──

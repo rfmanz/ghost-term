@@ -8,6 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const { execSync } = require('child_process');
 
 // Prevent recursion: spawned claude process would re-trigger this hook
@@ -16,7 +17,6 @@ if (process.env.GHOST_TERM_RENAME) process.exit(0);
 const MAX_MESSAGES = 10;
 const MAX_MSG_LENGTH = 300;
 const COOLDOWN_MS = 2.5 * 60 * 1000; // 2.5 minutes between renames
-const STAMP_FILE = path.join(os.tmpdir(), 'ghost-term-rename-stamp');
 
 const PROMPT = `You are a tab-naming assistant. Given this conversation between a user and Claude, output ONLY a 2-4 word topic label that captures the current focus. Just the label — no quotes, no explanation, no punctuation, no formatting.
 
@@ -81,7 +81,8 @@ function collectRecentMessages(transcriptPath) {
 
 function postRename(name) {
   return new Promise((resolve) => {
-    const body = JSON.stringify({ name, index: 0 });
+    const tabId = process.env.GHOST_TERM_TAB_ID;
+    const body = JSON.stringify(tabId ? { name, tabId } : { name });
     const req = http.request({
       hostname: 'localhost',
       port: 3000,
@@ -113,9 +114,11 @@ async function main() {
       const transcriptPath = data.transcript_path;
       if (!transcriptPath || !fs.existsSync(transcriptPath)) process.exit(0);
 
-      // Debounce: skip if we renamed recently
+      // Debounce: per-session stamp so tabs don't block each other
+      const stampHash = crypto.createHash('md5').update(transcriptPath).digest('hex').slice(0, 8);
+      const stampFile = path.join(os.tmpdir(), `ghost-term-rename-${stampHash}`);
       try {
-        const stamp = fs.statSync(STAMP_FILE).mtimeMs;
+        const stamp = fs.statSync(stampFile).mtimeMs;
         if (Date.now() - stamp < COOLDOWN_MS) process.exit(0);
       } catch {} // no stamp file = first run, proceed
 
@@ -140,7 +143,7 @@ async function main() {
 
       await postRename(label);
       // Touch stamp file so we don't rename again too soon
-      fs.writeFileSync(STAMP_FILE, '');
+      fs.writeFileSync(stampFile, '');
     } catch {}
     process.exit(0);
   });
