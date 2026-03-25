@@ -65,7 +65,11 @@
   const tabs = [];
   let activeIdx = 0;
   let prevActiveIdx = 0;
-  let splitRoot = null; // Tree: { type:'split', dir, ratio, children:[node,node], el, divider } or { type:'leaf', tabIdx }
+  let splitRoot = null; // Tree: { type:'split', dir, ratio, children:[node,node], el, divider } or { type:'leaf', tabId }
+
+  function tabById(id) {
+    return tabs.find(t => t.id === id);
+  }
 
   const tabBar = document.getElementById('tab-bar');
   const terminalsContainer = document.getElementById('terminal-container');
@@ -108,7 +112,7 @@
       const state = tab.thinking ? ' thinking' : tab.waiting ? ' waiting' : '';
       let paneClass = '';
       if (splitRoot) {
-        const leaf = findLeafByTab(splitRoot, i);
+        const leaf = findLeafByTab(splitRoot, tab.id);
         if (leaf) paneClass = i === activeIdx ? ' in-pane-0' : ' in-pane-1';
       }
       const newClass = 'tab' + (i === activeIdx ? ' active' : '') + state + paneClass;
@@ -125,7 +129,7 @@
       // Visual order: pane tabs first when split
       if (splitRoot) {
         const leaves = allLeaves(splitRoot);
-        const leafIdx = leaves.findIndex(l => l.tabIdx === i);
+        const leafIdx = leaves.findIndex(l => l.tabId === tab.id);
         el.style.order = leafIdx !== -1 ? String(leafIdx) : String(leaves.length);
       } else {
         el.style.order = '';
@@ -145,10 +149,10 @@
 
   // ── Split tree helpers ──
 
-  function findLeafByTab(node, tabIdx) {
+  function findLeafByTab(node, tabId) {
     if (!node) return null;
-    if (node.type === 'leaf') return node.tabIdx === tabIdx ? node : null;
-    return findLeafByTab(node.children[0], tabIdx) || findLeafByTab(node.children[1], tabIdx);
+    if (node.type === 'leaf') return node.tabId === tabId ? node : null;
+    return findLeafByTab(node.children[0], tabId) || findLeafByTab(node.children[1], tabId);
   }
 
   function findParent(root, target) {
@@ -164,12 +168,12 @@
   }
 
   function getNodeEl(node) {
-    if (node.type === 'leaf') return tabs[node.tabIdx]?.container;
+    if (node.type === 'leaf') return tabById(node.tabId)?.container;
     return node.el;
   }
 
-  function fitPaneTerminal(tabIdx) {
-    const tab = tabs[tabIdx];
+  function fitPaneTerminal(tabId) {
+    const tab = tabById(tabId);
     if (!tab) return;
     tab.fitAddon.fit();
     if (tab.ws.readyState === 1) {
@@ -180,19 +184,21 @@
   function focusLeaf(leaf) {
     if (!splitRoot) return;
     allLeaves(splitRoot).forEach(l => {
-      tabs[l.tabIdx].container.classList.remove('pane-focused');
+      tabById(l.tabId).container.classList.remove('pane-focused');
     });
-    tabs[leaf.tabIdx].container.classList.add('pane-focused');
-    if (leaf.tabIdx !== activeIdx) prevActiveIdx = activeIdx;
-    activeIdx = leaf.tabIdx;
-    tabs[activeIdx].term.focus();
+    const tab = tabById(leaf.tabId);
+    tab.container.classList.add('pane-focused');
+    const idx = tabs.indexOf(tab);
+    if (idx !== activeIdx) prevActiveIdx = activeIdx;
+    activeIdx = idx;
+    tab.term.focus();
     renderTabBar();
   }
 
   function navigatePane(delta) {
     if (!splitRoot) return;
     const leaves = allLeaves(splitRoot);
-    const currentLeaf = findLeafByTab(splitRoot, activeIdx);
+    const currentLeaf = findLeafByTab(splitRoot, tabs[activeIdx].id);
     const idx = leaves.indexOf(currentLeaf);
     if (idx === -1) return;
     const newIdx = (idx + delta + leaves.length) % leaves.length;
@@ -206,7 +212,7 @@
     if (child0El) child0El.style.flex = String(node.ratio);
     if (child1El) child1El.style.flex = String(1 - node.ratio);
     requestAnimationFrame(() => {
-      allLeaves(node).forEach(l => fitPaneTerminal(l.tabIdx));
+      allLeaves(node).forEach(l => fitPaneTerminal(l.tabId));
     });
   }
 
@@ -215,42 +221,9 @@
     applyNodeRatio(node);
   }
 
-  function reorderTabsToPanes() {
-    if (!splitRoot) return;
-
-    const leaves = allLeaves(splitRoot);
-    const paneIndices = leaves.map(l => l.tabIdx);
-    const paneSet = new Set(paneIndices);
-    const rest = [];
-    for (let i = 0; i < tabs.length; i++) {
-      if (!paneSet.has(i)) rest.push(i);
-    }
-    const newOrder = [...paneIndices, ...rest];
-
-    if (newOrder.every((oldIdx, newIdx) => oldIdx === newIdx)) return;
-
-    const indexMap = new Map();
-    newOrder.forEach((oldIdx, newIdx) => indexMap.set(oldIdx, newIdx));
-
-    const reordered = newOrder.map(i => tabs[i]);
-    tabs.length = 0;
-    tabs.push(...reordered);
-
-    function updateTree(node) {
-      if (node.type === 'leaf') node.tabIdx = indexMap.get(node.tabIdx);
-      else { updateTree(node.children[0]); updateTree(node.children[1]); }
-    }
-    updateTree(splitRoot);
-
-    activeIdx = indexMap.get(activeIdx);
-    prevActiveIdx = indexMap.get(prevActiveIdx);
-
-    tabBar.innerHTML = '';
-  }
-
   function buildNodeDOM(node) {
     if (node.type === 'leaf') {
-      const container = tabs[node.tabIdx].container;
+      const container = tabById(node.tabId).container;
       container.style.display = '';
       container.classList.add('split-pane');
       return container;
@@ -272,7 +245,6 @@
   }
 
   function rebuildSplitDOM() {
-    reorderTabsToPanes();
     terminalsContainer.querySelectorAll('.split-container').forEach(el => el.remove());
     tabs.forEach(tab => {
       tab.container.classList.remove('split-pane', 'pane-focused');
@@ -301,39 +273,39 @@
 
     const rootEl = buildNodeDOM(splitRoot);
     terminalsContainer.appendChild(rootEl);
-    const leaf = findLeafByTab(splitRoot, activeIdx);
-    if (leaf) tabs[leaf.tabIdx].container.classList.add('pane-focused');
+    const leaf = findLeafByTab(splitRoot, tabs[activeIdx].id);
+    if (leaf) tabById(leaf.tabId).container.classList.add('pane-focused');
     requestAnimationFrame(() => {
-      allLeaves(splitRoot).forEach(l => fitPaneTerminal(l.tabIdx));
+      allLeaves(splitRoot).forEach(l => fitPaneTerminal(l.tabId));
       if (tabs[activeIdx]) tabs[activeIdx].term.focus();
     });
     renderTabBar();
   }
 
   function splitView(direction) {
-    const used = splitRoot ? new Set(allLeaves(splitRoot).map(l => l.tabIdx)) : new Set([activeIdx]);
-    let newTabIdx = -1;
+    const used = splitRoot ? new Set(allLeaves(splitRoot).map(l => l.tabId)) : new Set([tabs[activeIdx].id]);
+    let newTab = null;
     for (let i = 1; i < tabs.length; i++) {
-      const candidate = (activeIdx + i) % tabs.length;
-      if (!used.has(candidate)) { newTabIdx = candidate; break; }
+      const candidate = tabs[(activeIdx + i) % tabs.length];
+      if (!used.has(candidate.id)) { newTab = candidate; break; }
     }
-    if (newTabIdx === -1) {
-      const newTab = createTab('scratch', { activate: false });
-      newTabIdx = tabs.indexOf(newTab);
+    if (!newTab) {
+      newTab = createTab('scratch', { activate: false });
     }
 
+    const activeId = tabs[activeIdx].id;
     if (!splitRoot) {
       splitRoot = {
         type: 'split', dir: direction, ratio: 0.5,
-        children: [{ type: 'leaf', tabIdx: activeIdx }, { type: 'leaf', tabIdx: newTabIdx }],
+        children: [{ type: 'leaf', tabId: activeId }, { type: 'leaf', tabId: newTab.id }],
         el: null, divider: null
       };
     } else {
-      const leaf = findLeafByTab(splitRoot, activeIdx);
+      const leaf = findLeafByTab(splitRoot, activeId);
       if (!leaf) return;
       const newSplit = {
         type: 'split', dir: direction, ratio: 0.5,
-        children: [{ type: 'leaf', tabIdx: activeIdx }, { type: 'leaf', tabIdx: newTabIdx }],
+        children: [{ type: 'leaf', tabId: activeId }, { type: 'leaf', tabId: newTab.id }],
         el: null, divider: null
       };
       const parent = findParent(splitRoot, leaf);
@@ -345,7 +317,7 @@
 
   function unsplit() {
     if (!splitRoot) return;
-    const leaf = findLeafByTab(splitRoot, activeIdx);
+    const leaf = findLeafByTab(splitRoot, tabs[activeIdx].id);
     if (!leaf) return;
     const parent = findParent(splitRoot, leaf);
     if (!parent) {
@@ -360,14 +332,6 @@
     rebuildSplitDOM();
   }
 
-  function adjustTreeIndices(node, removedIdx) {
-    if (node.type === 'leaf') {
-      if (node.tabIdx > removedIdx) node.tabIdx--;
-    } else {
-      adjustTreeIndices(node.children[0], removedIdx);
-      adjustTreeIndices(node.children[1], removedIdx);
-    }
-  }
 
   function createTab(name, options = {}) {
     const { activate = true } = options;
@@ -482,15 +446,14 @@
       }
     });
 
-    const tab = { name, term, ws, fitAddon, container, explicit, thinking: false, waiting: false, claudeRunning: null, quietTicks: 0, submitted: false, lastDataAt: 0, lastInputAt: 0, lastOutputAt: 0 };
+    const tab = { id: tabCounter, name, term, ws, fitAddon, container, explicit, thinking: false, waiting: false, claudeRunning: null, quietTicks: 0, submitted: false, lastDataAt: 0, lastInputAt: 0, lastOutputAt: 0 };
     tabs.push(tab);
 
     // Click to focus pane in split mode
     container.addEventListener('mousedown', () => {
       if (splitRoot) {
-        const tabIdx = tabs.indexOf(tab);
-        const leaf = findLeafByTab(splitRoot, tabIdx);
-        if (leaf && tabIdx !== activeIdx) {
+        const leaf = findLeafByTab(splitRoot, tab.id);
+        if (leaf && tabs.indexOf(tab) !== activeIdx) {
           focusLeaf(leaf);
         }
       }
@@ -561,7 +524,7 @@
 
       // Alt+S: swap children in parent split
       if (e.altKey && !e.ctrlKey && !e.shiftKey && (e.key === 's' || e.key === 'S') && splitRoot) {
-        const leaf = findLeafByTab(splitRoot, activeIdx);
+        const leaf = findLeafByTab(splitRoot, tabs[activeIdx].id);
         const parent = findParent(splitRoot, leaf);
         if (parent) {
           parent.children.reverse();
@@ -584,7 +547,7 @@
 
       // Alt+Shift+Arrow: resize parent split of active pane
       if (e.altKey && !e.ctrlKey && e.shiftKey && splitRoot) {
-        const leaf = findLeafByTab(splitRoot, activeIdx);
+        const leaf = findLeafByTab(splitRoot, tabs[activeIdx].id);
         const parent = findParent(splitRoot, leaf);
         if (parent) {
           const isH = parent.dir === 'horizontal';
@@ -657,15 +620,15 @@
 
     if (splitRoot) {
       // If tab is already in a pane, focus it
-      const leaf = findLeafByTab(splitRoot, idx);
+      const leaf = findLeafByTab(splitRoot, tabs[idx].id);
       if (leaf) {
         focusLeaf(leaf);
         return;
       }
       // Replace active pane's tab with the new one
-      const active = findLeafByTab(splitRoot, activeIdx);
+      const active = findLeafByTab(splitRoot, tabs[activeIdx].id);
       if (active) {
-        active.tabIdx = idx;
+        active.tabId = tabs[idx].id;
         if (idx !== activeIdx) prevActiveIdx = activeIdx;
         activeIdx = idx;
         rebuildSplitDOM();
@@ -694,10 +657,12 @@
   }
 
   function closeTab(idx) {
+    const closingId = tabs[idx].id;
     const wasSplit = !!splitRoot;
+
     // Remove from split tree if present
     if (splitRoot) {
-      const leaf = findLeafByTab(splitRoot, idx);
+      const leaf = findLeafByTab(splitRoot, closingId);
       if (leaf) {
         const parent = findParent(splitRoot, leaf);
         if (parent) {
@@ -710,14 +675,18 @@
           splitRoot = null;
         }
         if (splitRoot && splitRoot.type === 'leaf') {
-          activeIdx = splitRoot.tabIdx;
+          activeIdx = tabs.indexOf(tabById(splitRoot.tabId));
           splitRoot = null;
         } else if (splitRoot) {
           const first = allLeaves(splitRoot)[0];
-          if (first) activeIdx = first.tabIdx;
+          if (first) activeIdx = tabs.indexOf(tabById(first.tabId));
         }
       }
     }
+
+    // Remember active/prev by ID before splice
+    const activeId = tabs[activeIdx]?.id;
+    const prevId = tabs[prevActiveIdx]?.id;
 
     const tab = tabs[idx];
     tab.ws.close();
@@ -730,23 +699,30 @@
       return;
     }
 
-    // Adjust tree indices
+    // Collapse tree if fewer than 2 leaves
     if (splitRoot) {
-      adjustTreeIndices(splitRoot, idx);
       const leaves = allLeaves(splitRoot);
       if (leaves.length < 2) {
-        if (leaves.length === 1) activeIdx = leaves[0].tabIdx;
+        if (leaves.length === 1) activeIdx = tabs.indexOf(tabById(leaves[0].tabId));
         splitRoot = null;
       }
     }
 
-    // Adjust indices for removed tab
-    if (prevActiveIdx === idx) prevActiveIdx = 0;
-    else if (prevActiveIdx > idx) prevActiveIdx--;
-    if (prevActiveIdx >= tabs.length) prevActiveIdx = tabs.length - 1;
+    // Resolve IDs back to indices after splice
+    if (activeId === closingId) {
+      activeIdx = Math.min(idx, tabs.length - 1);
+    } else {
+      activeIdx = tabs.findIndex(t => t.id === activeId);
+      if (activeIdx === -1) activeIdx = 0;
+    }
 
-    if (activeIdx === idx) activeIdx = Math.min(idx, tabs.length - 1);
-    else if (activeIdx > idx) activeIdx--;
+    if (prevId === closingId) {
+      prevActiveIdx = 0;
+    } else {
+      prevActiveIdx = tabs.findIndex(t => t.id === prevId);
+      if (prevActiveIdx === -1) prevActiveIdx = 0;
+    }
+    if (prevActiveIdx >= tabs.length) prevActiveIdx = tabs.length - 1;
 
     if (splitRoot || wasSplit) rebuildSplitDOM();
     else switchTab(activeIdx);
@@ -756,7 +732,7 @@
   window.addEventListener('resize', () => {
     if (splitRoot) {
       requestAnimationFrame(() => {
-        allLeaves(splitRoot).forEach(l => fitPaneTerminal(l.tabIdx));
+        allLeaves(splitRoot).forEach(l => fitPaneTerminal(l.tabId));
       });
       return;
     }
@@ -794,7 +770,7 @@
   };
 
   // ── Create initial tabs ──
-  const initialTabs = parseInt(new URLSearchParams(location.search).get('tabs')) || 3;
+  const initialTabs = parseInt(new URLSearchParams(location.search).get('tabs')) || 1;
   for (let i = 0; i < initialTabs; i++) {
     createTab(i === 0 ? urlName : 'scratch');
   }
