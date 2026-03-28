@@ -313,6 +313,8 @@
       else parent.children[parent.children.indexOf(leaf)] = newSplit;
     }
     rebuildSplitDOM();
+    const newLeaf = findLeafByTab(splitRoot, newTab.id);
+    if (newLeaf) focusLeaf(newLeaf);
   }
 
   function unsplit() {
@@ -861,7 +863,7 @@
   const clockEl = document.getElementById('clock');
   const updateClock = () => {
     const now = new Date();
-    clockEl.textContent = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    clockEl.textContent = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'America/New_York' });
   };
   updateClock();
   setInterval(updateClock, 1000);
