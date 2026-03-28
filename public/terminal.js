@@ -476,6 +476,12 @@
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
 
+      // Alt+F4: close the entire window
+      if (e.altKey && !e.ctrlKey && e.key === 'F4') {
+        window.close();
+        return false;
+      }
+
       // Alt+<key> → Ctrl+<key> mappings for readline shortcuts Chrome intercepts
       if (e.altKey && !e.ctrlKey && !e.shiftKey) {
         const altMap = { a: '\x01', k: '\x0b' }; // Ctrl+A, Ctrl+K
@@ -579,6 +585,14 @@
       // Ctrl+W: close current tab
       if (e.ctrlKey && !e.altKey && e.key === 'w') {
         closeTab(activeIdx);
+        return false;
+      }
+
+      // Ctrl+V: paste from clipboard
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && e.key === 'v') {
+        navigator.clipboard.readText().then(text => {
+          if (text && ws.readyState === 1) ws.send(text);
+        });
         return false;
       }
 
