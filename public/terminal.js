@@ -338,8 +338,7 @@
   function createTab(name, options = {}) {
     const { activate = true } = options;
     tabCounter++;
-    const explicit = name !== 'scratch';
-    if (!explicit) name = `session-${tabCounter}`;
+    if (name === 'scratch') name = 'bash';
 
     const container = document.createElement('div');
     container.className = 'tab-terminal';
@@ -379,15 +378,9 @@
       if (typeof e.data === 'string' && e.data.charCodeAt(0) === 0x02) {
         try {
           const status = JSON.parse(e.data.slice(1));
-          // Explicit rename routed from the stop hook via server (sets explicit to lock name)
-          if ('apiRename' in status) {
-            tab.name = status.apiRename;
-            tab.explicit = true;
-            renderTabBar();
-          }
-          // Auto-rename from server keystroke analysis (doesn't override explicit API renames)
-          if ('rename' in status && !tab.explicit) {
-            tab.name = status.rename;
+          // Shell type detection (ssh, powershell, wsl, bash)
+          if ('shellType' in status) {
+            tab.name = status.shellType;
             renderTabBar();
           }
           if ('claudeRunning' in status) {
@@ -448,7 +441,7 @@
       }
     });
 
-    const tab = { id: tabCounter, name, term, ws, fitAddon, container, explicit, thinking: false, waiting: false, claudeRunning: null, quietTicks: 0, submitted: false, lastDataAt: 0, lastInputAt: 0, lastOutputAt: 0 };
+    const tab = { id: tabCounter, name, term, ws, fitAddon, container, thinking: false, waiting: false, claudeRunning: null, quietTicks: 0, submitted: false, lastDataAt: 0, lastInputAt: 0, lastOutputAt: 0 };
     tabs.push(tab);
 
     // Click to focus pane in split mode
@@ -460,18 +453,6 @@
         }
       }
     });
-    // Track shell title for auto-naming (only when not explicitly renamed via API)
-    term.onTitleChange((title) => {
-      if (tab.explicit) return;
-      title = title.trim();
-      if (!title || /claude/i.test(title.replace(/[^a-zA-Z\s]/g, ''))) return;
-      title = title.replace(/^MINGW\d*:\s*/, '');
-      title = title.replace(/^\/[a-z]\/Users\/[^/]+\/?/, '~/');
-      const parts = title.replace(/\/$/, '').split('/');
-      tab.name = parts.length > 2 ? parts.slice(-2).join('/') : title;
-      renderTabBar();
-    });
-
     // Keyboard shortcuts
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true;
@@ -774,14 +755,6 @@
         vid.load();
         vid.play();
       }
-      if (data.type === 'rename-tab') {
-        const idx = data.index != null ? data.index : activeIdx;
-        if (tabs[idx]) {
-          tabs[idx].name = data.name;
-          tabs[idx].explicit = true;
-          renderTabBar();
-        }
-      }
     } catch (err) {}
   };
 
@@ -877,7 +850,7 @@
   const clockEl = document.getElementById('clock');
   const updateClock = () => {
     const now = new Date();
-    clockEl.textContent = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'America/New_York' });
+    clockEl.textContent = now.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'America/Lima' });
   };
   updateClock();
   setInterval(updateClock, 1000);
