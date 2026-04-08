@@ -357,7 +357,15 @@
 
     const fitAddon = new FitAddon.FitAddon();
     term.loadAddon(fitAddon);
-    term.loadAddon(new WebLinksAddon.WebLinksAddon());
+    // Route link clicks to the server so URLs open in the system default
+    // browser (main Chrome profile), not this isolated --user-data-dir window.
+    term.loadAddon(new WebLinksAddon.WebLinksAddon((event, uri) => {
+      fetch('/api/open-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: uri }),
+      }).catch(() => {});
+    }));
     term.open(container);
 
     // Auto-copy selection to clipboard

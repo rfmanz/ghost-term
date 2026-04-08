@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const crypto = require('crypto');
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 
 const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
 
@@ -67,6 +67,23 @@ app.post('/api/rename-tab', (req, res) => {
     client.write(`data: ${JSON.stringify({ type: 'rename-tab', name, index })}\n\n`);
   }
   res.json({ ok: true, clients: sseClients.size });
+});
+
+// Open a URL in the system default browser (main Chrome profile, not the
+// isolated --user-data-dir profile that ghost-term itself runs in).
+app.post('/api/open-url', (req, res) => {
+  const url = req.body && req.body.url;
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: 'http(s) url required' });
+  }
+  // spawn with array args avoids cmd metachar issues (& ? etc. in URLs)
+  const child = spawn('cmd.exe', ['/c', 'start', '', url], {
+    windowsHide: true,
+    detached: true,
+    stdio: 'ignore',
+  });
+  child.unref();
+  res.json({ ok: true });
 });
 
 // Serve config (sans sensitive fields) to frontend
